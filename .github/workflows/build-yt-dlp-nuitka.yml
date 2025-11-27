@@ -131,10 +131,9 @@ jobs:
           Write-Host "Building yt-dlp version $env:YTDLP_VERSION for $env:PROCESSOR_ARCHITECTURE"
 
           Set-Location yt-dlp
-
+          
           python -m nuitka `
             --standalone `
-            --onefile `
             --msvc=latest `
             --output-dir=dist `
             --lto=yes `
@@ -142,13 +141,26 @@ jobs:
             --assume-yes-for-downloads `
             --onefile-no-compression `
             --windows-icon-from-ico=devscripts\logo.ico `
+            --include-package-data=yt_dlp_ejs `
+            --python-flag=-OO `
+            yt_dlp
+
+          python -m nuitka `
+            --standalone `
+            --onefile `
+            --msvc=latest `
+            --output-dir=dist `
+            --lto=yes `
+            --assume-yes-for-downloads `
+            --windows-icon-from-ico=devscripts\logo.ico `
+            --include-package-data=yt_dlp_ejs `
             --python-flag=-OO `
             yt_dlp
 
           Write-Host "Contents of dist:"
           Get-ChildItem -Recurse dist
 
-      - name: Collect onefile executable as artifact
+      - name: Collect onefile + standalone artifacts
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -162,18 +174,27 @@ jobs:
             Write-Error "No .exe found in yt-dlp/dist/"
           }
 
-          $outName = "yt-dlp-${version}-${target}.exe"
-          $outPath = Join-Path "artifacts" $outName
+          $onefileName = "yt-dlp-${version}-${target}-onefile.exe"
+          $onefilePath = Join-Path "artifacts" $onefileName
+          Copy-Item $exe.FullName $onefilePath -Force
+          Write-Host "Copied onefile exe to $onefilePath"
 
-          Copy-Item $exe.FullName $outPath -Force
+          $standaloneSrc = "yt-dlp/dist/yt_dlp.dist"
+          if (-not (Test-Path $standaloneSrc)) {
+            Write-Error "Standalone folder '$standaloneSrc' not found"
+          }
 
-          Write-Host "Copied onefile exe to $outPath"
+          $standaloneName = "yt-dlp-${version}-${target}-standalone.zip"
+          $standalonePath = Join-Path "artifacts" $standaloneName
 
-      - name: Upload build artifact
+          Compress-Archive -Path "$standaloneSrc\*" -DestinationPath $standalonePath -Force
+          Write-Host "Created standalone zip at $standalonePath"
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: yt-dlp-${{ env.YTDLP_VERSION }}-${{ matrix.name }}
-          path: artifacts/*.exe
+          path: artifacts/*
           if-no-files-found: error
 
   publish:
@@ -185,12 +206,8 @@ jobs:
     env:
       YTDLP_VERSION: ${{ needs.discover-latest.outputs.version }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout (needed for gh to see a git repo)
-        uses: actions/checkout@v4
-
       - name: Download artifacts from builds
         uses: actions/download-artifact@v4
         with:
@@ -200,17 +217,21 @@ jobs:
         run: |
           ls -R artifacts
 
-      - name: Create release and upload assets
-        run: |
-          set -e
-          TAG="$YTDLP_VERSION"
-          TITLE="yt-dlp $TAG (Nuitka)"
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.YTDLP_VERSION }}
+          name: yt-dlp ${{ env.YTDLP_VERSION }} (Nuitka)
+          body: |
+            Automated Nuitka builds of yt-dlp ${{ env.YTDLP_VERSION }} for:
+            - Windows x64
+            - Windows ARM64
 
-          FILES=$(find artifacts -name "*.exe" -print)
-
-          echo "Creating release $TAG with files:"
-          echo "$FILES"
-
-          gh release create "$TAG" $FILES \
-            --title "$TITLE" \
-            --notes "Automated Nuitka builds of yt-dlp $TAG for Windows x64 and Windows ARM64."
+            Included per target:
+            - Onefile EXE
+            - Standalone ZIP
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
