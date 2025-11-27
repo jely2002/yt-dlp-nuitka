@@ -94,9 +94,10 @@ jobs:
           Expand-Archive -Path $zipPath -DestinationPath $destDir -Force
 
           $upxRoot = Get-ChildItem $destDir -Directory | Select-Object -First 1
-          Write-Host "UPX extracted to $($upxRoot.FullName)"
-
           $upxBin = $upxRoot.FullName
+          Write-Host "UPX extracted to $upxBin"
+
+          $env:PATH = "$upxBin;$env:PATH"
           Add-Content -Path $env:GITHUB_PATH -Value $upxBin
 
           upx --version
