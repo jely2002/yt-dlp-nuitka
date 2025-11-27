@@ -131,11 +131,13 @@ jobs:
 
           python -m nuitka `
             --standalone `
-            --clang `
+            --msvc=latest `
             --output-dir=dist `
             --lto=yes `
             --enable-plugin=upx `
+            --assume-yes-for-downloads `
             --onefile-no-compression `
+            --windows-icon-from-ico=devscripts\logo.ico `
             --python-flag=-OO `
             yt_dlp
 
