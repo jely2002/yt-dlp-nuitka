@@ -135,6 +135,7 @@ jobs:
             --output-dir=dist `
             --lto=yes `
             --enable-plugin=upx `
+            --onefile-no-compression `
             --python-flag=-OO `
             yt_dlp
 
