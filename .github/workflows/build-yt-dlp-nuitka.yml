@@ -131,6 +131,7 @@ jobs:
 
           python -m nuitka `
             --standalone `
+            --onefile `
             --msvc=latest `
             --output-dir=dist `
             --lto=yes `
@@ -144,7 +145,7 @@ jobs:
           Write-Host "Contents of dist:"
           Get-ChildItem -Recurse dist
 
-      - name: Package dist folder into zip
+      - name: Collect onefile executable as artifact
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -153,18 +154,23 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 
-          $zipName = "yt-dlp-${version}-${target}-dist.zip"
-          $zipPath = Join-Path "artifacts" $zipName
+          $exe = Get-ChildItem "yt-dlp/dist" -Filter "*.exe" | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "No .exe found in yt-dlp/dist/"
+          }
 
-          Compress-Archive -Path "yt-dlp/dist/*" -DestinationPath $zipPath -Force
+          $outName = "yt-dlp-${version}-${target}.exe"
+          $outPath = Join-Path "artifacts" $outName
 
-          Write-Host "Created $zipPath"
+          Copy-Item $exe.FullName $outPath -Force
+
+          Write-Host "Copied onefile exe to $outPath"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: yt-dlp-${{ env.YTDLP_VERSION }}-${{ matrix.name }}
-          path: artifacts/*.zip
+          path: artifacts/*.exe
           if-no-files-found: error
 
   publish:
@@ -176,8 +182,12 @@ jobs:
     env:
       YTDLP_VERSION: ${{ needs.discover-latest.outputs.version }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
+      - name: Checkout (needed for gh to see a git repo)
+        uses: actions/checkout@v4
+
       - name: Download artifacts from builds
         uses: actions/download-artifact@v4
         with:
@@ -193,11 +203,11 @@ jobs:
           TAG="$YTDLP_VERSION"
           TITLE="yt-dlp $TAG (Nuitka)"
 
-          FILES=$(find artifacts -name "*.zip" -print)
+          FILES=$(find artifacts -name "*.exe" -print)
 
           echo "Creating release $TAG with files:"
           echo "$FILES"
 
           gh release create "$TAG" $FILES \
             --title "$TITLE" \
-            --notes "Automated Nuitka standalone dist builds of yt-dlp $TAG for Windows x64 and Windows ARM64."
+            --notes "Automated Nuitka builds of yt-dlp $TAG for Windows x64 and Windows ARM64."
