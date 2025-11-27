@@ -1,5 +1,8 @@
 name: Build yt-dlp with Nuitka
 
+permissions:
+  contents: write
+
 on:
   schedule:
     - cron: "0 */6 * * *"
