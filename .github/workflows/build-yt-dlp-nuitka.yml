@@ -136,7 +136,7 @@ jobs:
             --lto=yes `
             --enable-plugin=upx `
             --python-flag=-OO `
-            -m yt_dlp
+            yt_dlp
 
           Write-Host "Contents of dist:"
           Get-ChildItem -Recurse dist
