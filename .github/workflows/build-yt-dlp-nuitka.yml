@@ -1,0 +1,199 @@
+name: Build yt-dlp with Nuitka
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  discover-latest:
+    name: Discover latest yt-dlp release
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.fetch.outputs.version }}
+      should_build: ${{ steps.check.outputs.should_build }}
+
+    steps:
+      - name: Fetch latest yt-dlp release
+        id: fetch
+        run: |
+          set -e
+          JSON=$(curl -fsSL https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest)
+          TAG=$(echo "$JSON" | jq -r '.tag_name')
+          echo "Latest upstream tag: $TAG"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Check if this version already exists in this repo
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER_REPO: ${{ github.repository }}
+        run: |
+          set -e
+          TAG="${{ steps.fetch.outputs.version }}"
+
+          STATUS=$(curl \
+            -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$OWNER_REPO/releases/tags/$TAG")
+
+          echo "Status for existing release: $STATUS"
+
+          if [ "$STATUS" = "200" ]; then
+            echo "should_build=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build Nuitka dist
+    needs: discover-latest
+    if: needs.discover-latest.outputs.should_build == 'yes'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            arch: x64
+          - name: windows-arm64
+            os: windows-11-arm
+            arch: arm64
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      YTDLP_VERSION: ${{ needs.discover-latest.outputs.version }}
+
+    steps:
+      - name: Checkout (this repo)
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.arch }}
+
+      - name: Install UPX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $version = "4.2.4"
+          $url = "https://github.com/upx/upx/releases/download/v$version/upx-$version-win64.zip"
+          $zipPath = "$env:RUNNER_TEMP\upx.zip"
+          $destDir = "$env:RUNNER_TEMP\upx"
+
+          Write-Host "Downloading UPX from $url"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+
+          Expand-Archive -Path $zipPath -DestinationPath $destDir -Force
+
+          $upxRoot = Get-ChildItem $destDir -Directory | Select-Object -First 1
+          Write-Host "UPX extracted to $($upxRoot.FullName)"
+
+          $upxBin = $upxRoot.FullName
+          Add-Content -Path $env:GITHUB_PATH -Value $upxBin
+
+          upx --version
+
+      - name: Clone yt-dlp source at tag
+        shell: bash
+        run: |
+          set -e
+          echo "Cloning yt-dlp at tag $YTDLP_VERSION"
+          git clone https://github.com/yt-dlp/yt-dlp.git
+          cd yt-dlp
+          git checkout "$YTDLP_VERSION"
+          git rev-parse --short HEAD
+
+      - name: Install Nuitka
+        shell: bash
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          cd yt-dlp
+          python -m pip install . nuitka
+
+      - name: Build yt-dlp with Nuitka
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "Building yt-dlp version $env:YTDLP_VERSION for $env:PROCESSOR_ARCHITECTURE"
+
+          Set-Location yt-dlp
+
+          python -m nuitka `
+            --standalone `
+            --clang `
+            --output-dir=dist `
+            --lto=yes `
+            --enable-plugin=upx `
+            --python-flag=-OO `
+            -m yt_dlp
+
+          Write-Host "Contents of dist:"
+          Get-ChildItem -Recurse dist
+
+      - name: Package dist folder into zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:YTDLP_VERSION
+          $target = "${{ matrix.name }}"
+
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+
+          $zipName = "yt-dlp-${version}-${target}-dist.zip"
+          $zipPath = Join-Path "artifacts" $zipName
+
+          Compress-Archive -Path "yt-dlp/dist/*" -DestinationPath $zipPath -Force
+
+          Write-Host "Created $zipPath"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yt-dlp-${{ env.YTDLP_VERSION }}-${{ matrix.name }}
+          path: artifacts/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Create GitHub Release
+    needs: [discover-latest, build]
+    if: needs.discover-latest.outputs.should_build == 'yes'
+    runs-on: ubuntu-latest
+
+    env:
+      YTDLP_VERSION: ${{ needs.discover-latest.outputs.version }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Download artifacts from builds
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: |
+          ls -R artifacts
+
+      - name: Create release and upload assets
+        run: |
+          set -e
+          TAG="$YTDLP_VERSION"
+          TITLE="yt-dlp $TAG (Nuitka)"
+
+          FILES=$(find artifacts -name "*.zip" -print)
+
+          echo "Creating release $TAG with files:"
+          echo "$FILES"
+
+          gh release create "$TAG" $FILES \
+            --title "$TITLE" \
+            --notes "Automated Nuitka standalone dist builds of yt-dlp $TAG for Windows x64 and Windows ARM64."
