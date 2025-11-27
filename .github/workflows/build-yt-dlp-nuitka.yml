@@ -112,13 +112,13 @@ jobs:
           git checkout "$YTDLP_VERSION"
           git rev-parse --short HEAD
 
-      - name: Install Nuitka
+      - name: Install yt-dlp and Nuitka
         shell: bash
         run: |
           set -e
           python -m pip install --upgrade pip
           cd yt-dlp
-          python -m pip install . nuitka
+          python -m pip install ".[default]" nuitka
 
       - name: Build yt-dlp with Nuitka
         shell: pwsh
