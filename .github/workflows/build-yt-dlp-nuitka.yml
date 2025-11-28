@@ -135,7 +135,7 @@ jobs:
           python -m nuitka `
             --standalone `
             --msvc=latest `
-            --output-dir=dist `
+            --output-dir=standalone `
             --lto=yes `
             --enable-plugin=upx `
             --assume-yes-for-downloads `
@@ -149,16 +149,13 @@ jobs:
             --standalone `
             --onefile `
             --msvc=latest `
-            --output-dir=dist `
+            --output-dir=onefile `
             --lto=yes `
             --assume-yes-for-downloads `
             --windows-icon-from-ico=devscripts\logo.ico `
             --include-package-data=yt_dlp_ejs `
             --python-flag=-OO `
             yt_dlp
-
-          Write-Host "Contents of dist:"
-          Get-ChildItem -Recurse dist
 
       - name: Collect onefile + standalone artifacts
         shell: pwsh
@@ -169,9 +166,9 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
 
-          $exe = Get-ChildItem "yt-dlp/dist" -Filter "*.exe" | Select-Object -First 1
+          $exe = Get-ChildItem "yt-dlp/onefile" -Filter "*.exe" | Select-Object -First 1
           if (-not $exe) {
-            Write-Error "No .exe found in yt-dlp/dist/"
+            Write-Error "No .exe found in yt-dlp/onefile/"
           }
 
           $onefileName = "yt-dlp-${version}-${target}-onefile.exe"
@@ -179,7 +176,7 @@ jobs:
           Copy-Item $exe.FullName $onefilePath -Force
           Write-Host "Copied onefile exe to $onefilePath"
 
-          $standaloneSrc = "yt-dlp/dist/yt_dlp.dist"
+          $standaloneSrc = "yt-dlp/standalone/yt_dlp.dist"
           if (-not (Test-Path $standaloneSrc)) {
             Write-Error "Standalone folder '$standaloneSrc' not found"
           }
